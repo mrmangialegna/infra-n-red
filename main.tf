@@ -113,16 +113,19 @@ resource "aws_iam_instance_profile" "ec2_s3_profile" {
 }
 
 # --- Key Pair ---
-resource "aws_key_pair" "deployer" {
-  key_name   = "deployer-key"
-  public_key = file("chiave.pub")
-}
+# resource "aws_key_pair" "deployer" {
+#   key_name   = "deployer-key"
+#   public_key = file("chiave.pub")
+# }
 
 # --- AMI Amazon Linux 2 ---
 data "aws_ami" "amazon_linux" {
   most_recent = true
   owners      = ["amazon"]
-  filter { name = "name"; values = ["amzn2-ami-hvm-*-x86_64-gp2"] }
+  filter {
+    name   = "name"
+    values = ["amzn2-ami-hvm-*-x86_64-gp2"]
+  }
 }
 
 # --- Volume persistente per MongoDB (EBS) ---
@@ -139,7 +142,7 @@ resource "aws_instance" "base" {
   subnet_id              = aws_subnet.public_subnet.id
   vpc_security_group_ids = [aws_security_group.sg1.id]
   iam_instance_profile   = aws_iam_instance_profile.ec2_s3_profile.name
-  key_name               = aws_key_pair.deployer.key_name
+  # key_name               = aws_key_pair.deployer.key_name
   availability_zone      = "us-west-2a"
 
   tags = { Name = "notaboringname_ec2" }
@@ -169,7 +172,7 @@ resource "aws_volume_attachment" "mongo_data_attach" {
 # --- S3 bucket ---
 resource "aws_s3_bucket" "storage" {
   bucket = "cloning-app-storage"
-  tags = { Name = "CloningAppStorage"; Environment = "Dev" }
+  tags = { Name = "CloningAppStorage", Environment = "Dev" }
 }
 
 resource "aws_s3_bucket_public_access_block" "storage_pab" {
