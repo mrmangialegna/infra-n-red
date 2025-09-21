@@ -79,13 +79,6 @@ resource "aws_security_group" "sg1" {
   vpc_id      = aws_vpc.vpc1.id
 
   ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = var.allowed_ssh_cidr
-  }
-
-  ingress {
     from_port       = var.service_port
     to_port         = var.service_port
     protocol        = "tcp"
@@ -99,6 +92,86 @@ resource "aws_security_group" "sg1" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 }
+
+# Private Subnet and NAT for EC2
+resource "aws_subnet" "private_subnet_EC2" {
+  vpc_id                  = aws_vpc.vpc1.id
+  cidr_block              = var.private_subnet_cidr_EC2
+  availability_zone       = var.availability_zone
+  map_public_ip_on_launch = false
+
+  tags = {
+    Name = "private-subnet-EC2"
+  }
+}
+
+# Second Private Subnet for EC2 (multi-AZ) 
+resource "aws_subnet" "private_subnet_EC2_2" {
+  vpc_id                  = aws_vpc.vpc1.id
+  cidr_block              = var.private_subnet_cidr_EC2_2
+  availability_zone       = var.availability_zone2
+  map_public_ip_on_launch = false
+
+  tags = {
+    Name = "private-subnet-EC2-2"
+  }
+}
+
+# Elastic IP for NAT EC2
+resource "aws_eip" "nat_eip" {
+  count  = var.enable_nat_gateway ? 1 : 0
+  domain = "vpc"
+
+  tags = {
+    Name = "nat-eip"
+  }
+}
+
+# Private Route Table for EC2
+resource "aws_route_table" "private_rt_EC2" {
+  vpc_id = aws_vpc.vpc1.id
+
+  tags = {
+    Name = "private-route-table_EC2"
+  }
+}
+
+# Private Route Table for EC2_2
+resource "aws_route_table" "private_rt_EC2_2" {
+  vpc_id = aws_vpc.vpc1.id
+
+  tags = {
+    Name = "private-route-table_EC2_2"
+  }
+}
+
+# Route to internet via NAT for EC2_1
+resource "aws_route" "private_EC2_1_to_internet_via_nat" {
+  count                  = var.enable_nat_gateway ? 1 : 0
+  route_table_id         = aws_route_table.private_rt_EC2.id
+  destination_cidr_block = "0.0.0.0/0"
+  nat_gateway_id         = aws_nat_gateway.nat[0].id
+}
+
+# Route to internet via NAT for EC2_2
+resource "aws_route" "private_EC2_2_to_internet_via_nat" {
+  count                  = var.enable_nat_gateway ? 1 : 0
+  route_table_id         = aws_route_table.private_rt_EC2_2.id
+  destination_cidr_block = "0.0.0.0/0"
+  nat_gateway_id         = aws_nat_gateway.nat[0].id
+}
+
+# Associate route table to private subnet EC2
+resource "aws_route_table_association" "private_rta_EC2" {
+  subnet_id      = aws_subnet.private_subnet_EC2.id
+  route_table_id = aws_route_table.private_rt_EC2.id
+}
+
+# Associate route table to private subnet EC2_2       
+resource "aws_route_table_association" "private_rta_EC2_2" {
+  subnet_id      = aws_subnet.private_subnet_EC2_2.id
+  route_table_id = aws_route_table.private_rt_EC2_2.id
+} 
 
 # IAM Role for EC2 with S3 access
 resource "aws_iam_role" "ec2_s3_role" {
@@ -163,6 +236,18 @@ resource "aws_ebs_volume" "mongo_data" {
 
   tags = {
     Name = "mongo_data_volume"
+    Backup = "MongoDB"
+  }
+}
+
+# Persistent Volume for MongoDB 2 (EBS) 
+resource "aws_ebs_volume" "mongo_data_2" {
+  availability_zone = var.availability_zone2
+  size              = 10
+
+  tags = {
+    Name = "mongo_data_volume_2"
+    Backup = "MongoDB"
   }
 }
 
@@ -176,6 +261,7 @@ resource "aws_s3_bucket" "storage" {
   }
 }
 
+#Bucket policy to block public access
 resource "aws_s3_bucket_public_access_block" "storage_pab" {
   bucket = aws_s3_bucket.storage.id
 
@@ -185,6 +271,7 @@ resource "aws_s3_bucket_public_access_block" "storage_pab" {
   restrict_public_buckets = true
 }
 
+#Versioning for S3 bucket
 resource "aws_s3_bucket_versioning" "storage_versioning" {
   bucket = aws_s3_bucket.storage.id
 
@@ -311,10 +398,6 @@ resource "aws_launch_template" "app_lt" {
     usermod -a -G docker ec2-user
     curl -L "https://github.com/docker/compose/releases/download/v2.20.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
     chmod +x /usr/local/bin/docker-compose
-    mkfs -t ext4 /dev/xvdf || true
-    mkdir -p /mnt/mongo_data
-    mount /dev/xvdf /mnt/mongo_data || true
-    chown ec2-user:ec2-user /mnt/mongo_data
   EOF
   )
 
@@ -333,7 +416,7 @@ resource "aws_autoscaling_group" "app_asg" {
   desired_capacity    = var.asg_desired_capacity
   max_size            = var.asg_max_size
   min_size            = var.asg_min_size
-  vpc_zone_identifier = [aws_subnet.public_subnet.id, aws_subnet.public_subnet_2.id]
+  vpc_zone_identifier = [aws_subnet.private_subnet_EC2.id, aws_subnet.private_subnet_EC2_2.id]
 
   launch_template {
     id      = aws_launch_template.app_lt.id
@@ -358,9 +441,9 @@ output "s3_bucket_name" {
 }
 
 # Private Subnet and NAT for Mongo
-resource "aws_subnet" "private_subnet" {
+resource "aws_subnet" "private_subnet_Mongo" {
   vpc_id                  = aws_vpc.vpc1.id
-  cidr_block              = var.private_subnet_cidr
+  cidr_block              = var.private_subnet_cidr_Mongo
   availability_zone       = var.availability_zone
   map_public_ip_on_launch = false
 
@@ -369,13 +452,14 @@ resource "aws_subnet" "private_subnet" {
   }
 }
 
-# Elastic IP for NAT
-resource "aws_eip" "nat_eip" {
-  count  = var.enable_nat_gateway ? 1 : 0
-  domain = "vpc"
-
+# Second Private Subnet for Mongo 2 
+resource "aws_subnet" "private_subnet_Mongo_2" {
+  vpc_id                  = aws_vpc.vpc1.id
+  cidr_block              = var.private_subnet_cidr_Mongo_2
+  availability_zone       = var.availability_zone2
+  map_public_ip_on_launch = false   
   tags = {
-    Name = "nat-eip"
+    Name = "private-subnet-mongo-2"
   }
 }
 
@@ -392,27 +476,48 @@ resource "aws_nat_gateway" "nat" {
   depends_on = [aws_internet_gateway.igw]
 }
 
-# Private Route Table
-resource "aws_route_table" "private_rt" {
+# Private Route Table for Mongo_1
+resource "aws_route_table" "private_rt_Mongo" {
   vpc_id = aws_vpc.vpc1.id
 
   tags = {
-    Name = "private-route-table"
+    Name = "private-route-table_Mongo"
+  }
+}
+
+# Private Route Table for Mongo_2
+resource "aws_route_table" "private_rt_Mongo_2" {
+  vpc_id = aws_vpc.vpc1.id    
+  tags = {
+    Name = "private-route-table_Mongo_2"
   }
 }
 
 # Route to internet via NAT
 resource "aws_route" "private_to_internet_via_nat" {
   count                  = var.enable_nat_gateway ? 1 : 0
-  route_table_id         = aws_route_table.private_rt.id
+  route_table_id         = aws_route_table.private_rt_Mongo.id
+  destination_cidr_block = "0.0.0.0/0"
+  nat_gateway_id         = aws_nat_gateway.nat[0].id
+}
+# Route to internet via NAT for Mongo_2
+resource "aws_route" "private_Mongo_2_to_internet_via_nat" {
+  count                  = var.enable_nat_gateway ? 1 : 0
+  route_table_id         = aws_route_table.private_rt_Mongo_2.id
   destination_cidr_block = "0.0.0.0/0"
   nat_gateway_id         = aws_nat_gateway.nat[0].id
 }
 
 # Associate private route table to private subnet
 resource "aws_route_table_association" "private_rta" {
-  subnet_id      = aws_subnet.private_subnet.id
-  route_table_id = aws_route_table.private_rt.id
+  subnet_id      = aws_subnet.private_subnet_Mongo.id
+  route_table_id = aws_route_table.private_rt_Mongo.id
+}
+
+# Associate private route table to private subnet Mongo_2
+resource "aws_route_table_association" "private_rta_2" {
+  subnet_id      = aws_subnet.private_subnet_Mongo_2.id
+  route_table_id = aws_route_table.private_rt_Mongo_2.id
 }
 
 # MongoDB Security Group (private)
@@ -441,7 +546,7 @@ resource "aws_security_group" "mongo_sg" {
 resource "aws_instance" "mongo" {
   ami                         = data.aws_ami.amazon_linux.id
   instance_type               = var.instance_type
-  subnet_id                   = aws_subnet.private_subnet.id
+  subnet_id                   = aws_subnet.private_subnet_Mongo.id
   vpc_security_group_ids      = [aws_security_group.mongo_sg.id]
   iam_instance_profile        = aws_iam_instance_profile.ec2_s3_profile.name
   associate_public_ip_address = false
@@ -463,9 +568,45 @@ resource "aws_instance" "mongo" {
   EOF
 }
 
+# MongoDB EC2 in private subnet 2
+resource "aws_instance" "mongo_2" {
+  ami                         = data.aws_ami.amazon_linux.id
+  instance_type               = var.instance_type
+  subnet_id                   = aws_subnet.private_subnet_Mongo_2.id
+  vpc_security_group_ids      = [aws_security_group.mongo_sg.id]
+  iam_instance_profile        = aws_iam_instance_profile.ec2_s3_profile.name
+  associate_public_ip_address = false
+  availability_zone           = var.availability_zone2
+
+  tags = {
+    Name = "mongo_private_ec2_2"
+  }
+
+  user_data = <<-EOF
+    #!/bin/bash
+    yum update -y
+    amazon-linux-extras install epel -y || true
+    yum install -y mongodb-org || true
+    mkdir -p /data/db
+    chown -R mongod:mongod /data/db || true
+    systemctl enable mongod || true
+    systemctl start mongod || true
+  EOF
+}
+
+
 # Attach the EBS to the private Mongo instance
 resource "aws_volume_attachment" "mongo_data_attach_private" {
   device_name = "/dev/xvdf"
   volume_id   = aws_ebs_volume.mongo_data.id
   instance_id = aws_instance.mongo.id
 }
+
+# Attach the EBS 2 to the private Mongo instance
+resource "aws_volume_attachment" "mongo_data_attach_private_2" {
+  device_name = "/dev/xvdg"
+  volume_id   = aws_ebs_volume.mongo_data_2.id
+  instance_id = aws_instance.mongo_2.id
+}
+
+
