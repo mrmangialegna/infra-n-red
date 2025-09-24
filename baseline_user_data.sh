@@ -25,7 +25,7 @@ curl -L "https://github.com/docker/compose/releases/download/v2.20.2/docker-comp
 chmod +x /usr/local/bin/docker-compose
 
 # Full software stack (acts as repository)
-echo "📦 Installing full software stack..."
+echo "Installing full software stack..."
 
 # Node.js + PM2
 curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
@@ -274,7 +274,7 @@ class CodeAnalyzer:
         
         requirements = self.analyze_code(code_path, app_name)
         
-        print(f"📋 Analysis results:")
+        print(f" Analysis results:")
         print(f"  Runtime: {requirements['runtime']}")
         print(f"  Packages: {', '.join(requirements['packages'])}")
         print(f"  Services: {', '.join(requirements['services'])}")
