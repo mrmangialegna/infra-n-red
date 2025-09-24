@@ -8,7 +8,7 @@ S3_BUCKET="${s3_bucket}"
 SQS_QUEUE_URL="${sqs_queue_url}"
 REGION="${region}"
 
-echo "🔵 Setting up SPOT instance (Blue Stage - Production Migration Target)..."
+echo "Setting up SPOT instance (Blue Stage - Production Migration Target)..."
 
 # Basic system setup
 yum update -y
@@ -49,10 +49,10 @@ install_packages() {
     local memory=$4
     local cpu=$5
     
-    echo "🔧 Installing packages for runtime: $runtime"
-    echo "📋 Packages: $packages"
-    echo "🔧 Services: $services"
-    echo "💾 Memory: $memory | CPU: $cpu"
+    echo "Installing packages for runtime: $runtime"
+    echo "Packages: $packages"
+    echo "Services: $services"
+    echo "Memory: $memory | CPU: $cpu"
     
     case $runtime in
         "nodejs")
@@ -74,7 +74,7 @@ install_packages() {
             install_static_stack "$packages"
             ;;
         *)
-            echo "⚠️ Unknown runtime: $runtime"
+            echo "Unknown runtime: $runtime"
             ;;
     esac
     
@@ -94,13 +94,13 @@ install_packages() {
 
 install_nodejs_stack() {
     local packages=$1
-    echo "📦 Installing Node.js stack..."
+    echo "Installing Node.js stack..."
     
     # Try to get from baseline cache first
     if sync_from_baseline "nodejs"; then
-        echo "✅ Node.js installed from baseline cache"
+        echo "Node.js installed from baseline cache"
     else
-        echo "📥 Installing Node.js directly..."
+        echo "Installing Node.js directly..."
         curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
         yum install -y nodejs
         npm install -g pm2 pm2-logrotate
@@ -109,13 +109,13 @@ install_nodejs_stack() {
 
 install_python_stack() {
     local packages=$1
-    echo "🐍 Installing Python stack..."
+    echo "Installing Python stack..."
     
     # Try to get from baseline cache first
     if sync_from_baseline "python"; then
-        echo "✅ Python installed from baseline cache"
+        echo "Python installed from baseline cache"
     else
-        echo "📥 Installing Python directly..."
+        echo "Installing Python directly..."
         yum install -y python3 python3-pip python3-devel
         pip3 install --upgrade pip virtualenv
         
@@ -137,9 +137,9 @@ install_docker_stack() {
     
     # Try to get from baseline cache first
     if sync_from_baseline "docker"; then
-        echo "✅ Docker installed from baseline cache"
+        echo "Docker installed from baseline cache"
     else
-        echo "📥 Installing Docker directly..."
+        echo "Installing Docker directly..."
         amazon-linux-extras install docker -y
         systemctl enable docker && systemctl start docker
         usermod -a -G docker ec2-user
@@ -152,12 +152,12 @@ install_docker_stack() {
 
 install_go_stack() {
     local packages=$1
-    echo "🔷 Installing Go stack..."
+    echo "Installing Go stack..."
     
     if sync_from_baseline "golang"; then
-        echo "✅ Go installed from baseline cache"
+        echo "Go installed from baseline cache"
     else
-        echo "📥 Installing Go directly..."
+        echo "Installing Go directly..."
         yum install -y golang
     fi
 }
@@ -167,9 +167,9 @@ install_java_stack() {
     echo "☕ Installing Java stack..."
     
     if sync_from_baseline "java"; then
-        echo "✅ Java installed from baseline cache"
+        echo "Java installed from baseline cache"
     else
-        echo "📥 Installing Java directly..."
+        echo "Installing Java directly..."
         yum install -y java-11-openjdk-devel
         
         if [[ $packages == *"maven"* ]]; then
@@ -180,22 +180,22 @@ install_java_stack() {
 
 install_static_stack() {
     local packages=$1
-    echo "🌐 Installing static file server..."
+    echo "Installing static file server..."
     install_nginx
 }
 
 install_redis_client() {
-    echo "🔴 Installing Redis client..."
+    echo "Installing Redis client..."
     yum install -y redis-tools
 }
 
 install_mongodb_client() {
-    echo "🍃 Installing MongoDB client..."
+    echo "Installing MongoDB client..."
     yum install -y mongodb-org-shell
 }
 
 install_nginx() {
-    echo "🌐 Installing Nginx..."
+    echo "Installing Nginx..."
     yum install -y nginx
     systemctl enable nginx
 }
@@ -210,7 +210,7 @@ sync_from_baseline() {
     
     # Try to sync from baseline
     timeout 60 rsync -av --timeout=30 ec2-user@$BASELINE_IP:/opt/software-repo/$software/ /opt/software-repo/$software/ 2>/dev/null || {
-        echo "⚠️ Sync from baseline failed for $software"
+        echo "Sync from baseline failed for $software"
         return 1
     }
     
@@ -253,7 +253,7 @@ sync_from_baseline() {
 
 # Process SQS messages for package installation
 process_package_messages() {
-    echo "👂 Listening for package installation messages..."
+    echo "Listening for package installation messages..."
     
     while true; do
         # Poll SQS for messages
@@ -274,7 +274,7 @@ process_package_messages() {
                     MEMORY=$(echo $BODY | jq -r '.requirements.memory' 2>/dev/null)
                     CPU=$(echo $BODY | jq -r '.requirements.cpu' 2>/dev/null)
                     
-                    echo "🔄 Preparing packages for $APP_NAME..."
+                    echo "Preparing packages for $APP_NAME..."
                     
                     # Install required packages
                     install_packages "$RUNTIME" "$PACKAGES" "$SERVICES" "$MEMORY" "$CPU"
@@ -283,7 +283,7 @@ process_package_messages() {
                     redis-cli -h $REDIS_ENDPOINT set "app:$APP_NAME:packages-ready" "true" >/dev/null 2>&1 || true
                     redis-cli -h $REDIS_ENDPOINT set "app:$APP_NAME:runtime" "$RUNTIME" >/dev/null 2>&1 || true
                     
-                    echo "✅ Packages ready for $APP_NAME ($RUNTIME)"
+                    echo "Packages ready for $APP_NAME ($RUNTIME)"
                 fi
             fi
             
@@ -327,4 +327,4 @@ chmod +x /opt/heroku-clone/health.py
 nohup python3 /opt/heroku-clone/health.py &
 nohup /opt/heroku-clone/scripts/package_installer.sh &
 
-echo "✅ SPOT instance ready with intelligent package installation!"
+echo "SPOT instance ready with intelligent package installation!"
