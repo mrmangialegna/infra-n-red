@@ -1,20 +1,13 @@
-# =============================================================================
-# HEROKU CLONE - WORKLOAD MIGRATION ARCHITECTURE
-# =============================================================================
-# 1. Immediate deployment on baseline EC2 (Green Stage)
-# 2. Prepare spot instances with software from baseline
-# 3. Migrate workload from baseline to spot (Blue Stage)
-
 provider "aws" {
   region = var.region
 }
 
 # VPC and Networking (simplified)
 resource "aws_vpc" "main" {
-  cidr_block           = "10.0.0.0/16"
+  cidr_block           = var.vpc_cidr
   enable_dns_hostnames = true
   enable_dns_support   = true
-  tags = { Name = "heroku-clone-vpc" }
+  tags = merge(var.default_tags, var.additional_tags, { Name = "${var.project_name}-vpc" })
 }
 
 resource "aws_internet_gateway" "main" {
@@ -25,18 +18,18 @@ resource "aws_internet_gateway" "main" {
 resource "aws_subnet" "public" {
   count                   = 2
   vpc_id                  = aws_vpc.main.id
-  cidr_block              = "10.0.${count.index + 1}.0/24"
+  cidr_block              = var.public_subnet_cidrs[count.index]
   availability_zone       = data.aws_availability_zones.available.names[count.index]
   map_public_ip_on_launch = true
-  tags = { Name = "public-subnet-${count.index + 1}" }
+  tags = merge(var.default_tags, { Name = "${var.project_name}-public-subnet-${count.index + 1}" })
 }
 
 resource "aws_subnet" "private" {
   count             = 2
   vpc_id            = aws_vpc.main.id
-  cidr_block        = "10.0.${count.index + 10}.0/24"
+  cidr_block        = var.private_subnet_cidrs[count.index]
   availability_zone = data.aws_availability_zones.available.names[count.index]
-  tags = { Name = "private-subnet-${count.index + 1}" }
+  tags = merge(var.default_tags, { Name = "${var.project_name}-private-subnet-${count.index + 1}" })
 }
 
 resource "aws_route_table" "public" {
@@ -111,20 +104,31 @@ resource "aws_elasticache_subnet_group" "main" {
 }
 
 resource "aws_elasticache_replication_group" "main" {
-  replication_group_id       = "heroku-clone"
+  replication_group_id       = "${var.project_name}-redis"
   description                = "Redis for workload migration"
-  node_type                  = "cache.t3.micro"
-  port                       = 6379
-  num_cache_clusters         = 2
+  node_type                  = var.redis_node_type
+  port                       = var.redis_port
+  num_cache_clusters         = var.redis_num_cache_clusters
   automatic_failover_enabled = true
   multi_az_enabled          = true
   subnet_group_name         = aws_elasticache_subnet_group.main.name
   security_group_ids        = [aws_security_group.instances.id]
+  
+  tags = var.default_tags
 }
 
 # S3 for app storage
 resource "aws_s3_bucket" "apps" {
-  bucket = "heroku-clone-apps-${random_string.suffix.result}"
+  bucket = "${var.s3_bucket_prefix}-${random_string.suffix.result}"
+  tags = var.default_tags
+}
+
+resource "aws_s3_bucket_versioning" "apps" {
+  count  = var.enable_s3_versioning ? 1 : 0
+  bucket = aws_s3_bucket.apps.id
+  versioning_configuration {
+    status = "Enabled"
+  }
 }
 
 resource "random_string" "suffix" {
@@ -135,7 +139,10 @@ resource "random_string" "suffix" {
 
 # SQS for migration coordination
 resource "aws_sqs_queue" "migration" {
-  name = "heroku-clone-migration"
+  name                      = var.sqs_queue_name
+  message_retention_seconds = var.sqs_message_retention_seconds
+  receive_wait_time_seconds = var.sqs_receive_wait_time_seconds
+  tags = var.default_tags
 }
 
 # IAM for instances
