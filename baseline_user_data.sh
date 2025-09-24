@@ -7,7 +7,7 @@ S3_BUCKET="${s3_bucket}"
 SQS_QUEUE_URL="${sqs_queue_url}"
 REGION="${region}"
 
-echo "🟢 Setting up BASELINE instance (Green Stage - Immediate Deployment)..."
+echo "Setting up BASELINE instance (Green Stage - Immediate Deployment)..."
 
 # System setup
 yum update -y
@@ -41,7 +41,7 @@ yum install -y golang java-11-openjdk-devel
 
 # Create software repository
 mkdir -p /opt/software-repo/{nodejs,python,docker,golang,java}
-echo "📦 Creating software repository..."
+echo "Creating software repository..."
 
 # Package Node.js
 tar -czf /opt/software-repo/nodejs/binaries.tar.gz -C /usr/bin node npm npx
@@ -262,10 +262,10 @@ class CodeAnalyzer:
                 QueueUrl=self.queue_url,
                 MessageBody=json.dumps(message)
             )
-            print(f"✅ Sent package requirements for {app_name} to spot instances")
+            print(f"Sent package requirements for {app_name} to spot instances")
             return response['MessageId']
         except Exception as e:
-            print(f"❌ Failed to send message: {e}")
+            print(f"Failed to send message: {e}")
             return None
     
     def analyze_and_signal(self, code_path, app_name):
@@ -299,7 +299,7 @@ if __name__ == '__main__':
     analyzer = CodeAnalyzer(queue_url)
     requirements, message_id = analyzer.analyze_and_signal(code_path, app_name)
     
-    print(f"🎉 Analysis complete! Message ID: {message_id}")
+    print(f"Analysis complete! Message ID: {message_id}")
 CODE_ANALYZER
 chmod +x /opt/heroku-clone/scripts/code_analyzer.py
 cat > /opt/heroku-clone/scripts/deploy.sh << 'DEPLOY_SCRIPT'
@@ -308,7 +308,7 @@ APP_NAME=$1
 APP_PATH=$2
 PORT=${3:-8080}
 
-echo "🚀 IMMEDIATE deployment of $APP_NAME on BASELINE instance..."
+echo "IMMEDIATE deployment of $APP_NAME on BASELINE instance..."
 
 mkdir -p /opt/heroku-clone/apps/$APP_NAME
 cd /opt/heroku-clone/apps/$APP_NAME
@@ -342,7 +342,7 @@ redis-cli -h $REDIS_ENDPOINT set "app:$APP_NAME:port" $PORT
 # Trigger spot instance preparation
 aws sqs send-message --queue-url $SQS_QUEUE_URL --message-body "prepare-spot:$APP_NAME:$PORT" --region $REGION
 
-echo "✅ $APP_NAME running IMMEDIATELY on baseline! Preparing spot instances..."
+echo "$APP_NAME running IMMEDIATELY on baseline! Preparing spot instances..."
 DEPLOY_SCRIPT
 chmod +x /opt/heroku-clone/scripts/deploy.sh
 
@@ -372,4 +372,4 @@ nohup python3 /opt/heroku-clone/health.py &
 
 systemctl enable nginx && systemctl start nginx
 
-echo "✅ BASELINE instance ready for IMMEDIATE deployments!"
+echo "BASELINE instance ready for IMMEDIATE deployments!"
