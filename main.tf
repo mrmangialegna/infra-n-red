@@ -1,290 +1,67 @@
+# =============================================================================
+# HEROKU CLONE - WORKLOAD MIGRATION ARCHITECTURE
+# =============================================================================
+# 1. Immediate deployment on baseline EC2 (Green Stage)
+# 2. Prepare spot instances with software from baseline
+# 3. Migrate workload from baseline to spot (Blue Stage)
+
 provider "aws" {
   region = var.region
 }
 
-# VPC
-resource "aws_vpc" "vpc1" {
+# VPC and Networking (simplified)
+resource "aws_vpc" "main" {
   cidr_block           = "10.0.0.0/16"
   enable_dns_hostnames = true
   enable_dns_support   = true
-
-  tags = {
-    Name = "vpc1"
-  }
+  tags = { Name = "heroku-clone-vpc" }
 }
 
-# Internet Gateway
-resource "aws_internet_gateway" "igw" {
-  vpc_id = aws_vpc.vpc1.id
-
-  tags = {
-    Name = "vpc1-igw"
-  }
+resource "aws_internet_gateway" "main" {
+  vpc_id = aws_vpc.main.id
+  tags = { Name = "heroku-clone-igw" }
 }
 
-# First Public Subnet
-resource "aws_subnet" "public_subnet" {
-  vpc_id                  = aws_vpc.vpc1.id
-  cidr_block              = "10.0.1.0/24"
-  availability_zone       = var.availability_zone
+resource "aws_subnet" "public" {
+  count                   = 2
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = "10.0.${count.index + 1}.0/24"
+  availability_zone       = data.aws_availability_zones.available.names[count.index]
   map_public_ip_on_launch = true
-
-  tags = {
-    Name = "public-subnet"
-  }
+  tags = { Name = "public-subnet-${count.index + 1}" }
 }
 
-# Second public subnet for multi-AZ
-resource "aws_subnet" "public_subnet_2" {
-  vpc_id                  = aws_vpc.vpc1.id
-  cidr_block              = var.public_subnet_cidr2
-  availability_zone       = var.availability_zone2
-  map_public_ip_on_launch = true
-
-  tags = {
-    Name = "public-subnet-2"
-  }
+resource "aws_subnet" "private" {
+  count             = 2
+  vpc_id            = aws_vpc.main.id
+  cidr_block        = "10.0.${count.index + 10}.0/24"
+  availability_zone = data.aws_availability_zones.available.names[count.index]
+  tags = { Name = "private-subnet-${count.index + 1}" }
 }
 
-# Route Table
-resource "aws_route_table" "public_rt" {
-  vpc_id = aws_vpc.vpc1.id
-
+resource "aws_route_table" "public" {
+  vpc_id = aws_vpc.main.id
   route {
     cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.igw.id
+    gateway_id = aws_internet_gateway.main.id
   }
-
-  tags = {
-    Name = "public-route-table"
-  }
+  tags = { Name = "public-rt" }
 }
 
-# Associate RT to first public subnet
-resource "aws_route_table_association" "public_rta" {
-  subnet_id      = aws_subnet.public_subnet.id
-  route_table_id = aws_route_table.public_rt.id
+resource "aws_route_table_association" "public" {
+  count          = 2
+  subnet_id      = aws_subnet.public[count.index].id
+  route_table_id = aws_route_table.public.id
 }
 
-# Associate RT to second public subnet as well
-resource "aws_route_table_association" "public_rta_2" {
-  subnet_id      = aws_subnet.public_subnet_2.id
-  route_table_id = aws_route_table.public_rt.id
+data "aws_availability_zones" "available" {
+  state = "available"
 }
 
-# Security Group for App EC2
-resource "aws_security_group" "sg1" {
-  name        = "sg1"
-  description = "App instances security group"
-  vpc_id      = aws_vpc.vpc1.id
-
-  ingress {
-    from_port       = var.service_port
-    to_port         = var.service_port
-    protocol        = "tcp"
-    security_groups = [aws_security_group.alb_sg.id]
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-}
-
-# Private Subnet and NAT for EC2
-resource "aws_subnet" "private_subnet_EC2" {
-  vpc_id                  = aws_vpc.vpc1.id
-  cidr_block              = var.private_subnet_cidr_EC2
-  availability_zone       = var.availability_zone
-  map_public_ip_on_launch = false
-
-  tags = {
-    Name = "private-subnet-EC2"
-  }
-}
-
-# Second Private Subnet for EC2 (multi-AZ) 
-resource "aws_subnet" "private_subnet_EC2_2" {
-  vpc_id                  = aws_vpc.vpc1.id
-  cidr_block              = var.private_subnet_cidr_EC2_2
-  availability_zone       = var.availability_zone2
-  map_public_ip_on_launch = false
-
-  tags = {
-    Name = "private-subnet-EC2-2"
-  }
-}
-
-# Elastic IP for NAT EC2
-resource "aws_eip" "nat_eip" {
-  count  = var.enable_nat_gateway ? 1 : 0
-  domain = "vpc"
-
-  tags = {
-    Name = "nat-eip"
-  }
-}
-
-# Private Route Table for EC2
-resource "aws_route_table" "private_rt_EC2" {
-  vpc_id = aws_vpc.vpc1.id
-
-  tags = {
-    Name = "private-route-table_EC2"
-  }
-}
-
-# Private Route Table for EC2_2
-resource "aws_route_table" "private_rt_EC2_2" {
-  vpc_id = aws_vpc.vpc1.id
-
-  tags = {
-    Name = "private-route-table_EC2_2"
-  }
-}
-
-# Route to internet via NAT for EC2_1
-resource "aws_route" "private_EC2_1_to_internet_via_nat" {
-  count                  = var.enable_nat_gateway ? 1 : 0
-  route_table_id         = aws_route_table.private_rt_EC2.id
-  destination_cidr_block = "0.0.0.0/0"
-  nat_gateway_id         = aws_nat_gateway.nat[0].id
-}
-
-# Route to internet via NAT for EC2_2
-resource "aws_route" "private_EC2_2_to_internet_via_nat" {
-  count                  = var.enable_nat_gateway ? 1 : 0
-  route_table_id         = aws_route_table.private_rt_EC2_2.id
-  destination_cidr_block = "0.0.0.0/0"
-  nat_gateway_id         = aws_nat_gateway.nat[0].id
-}
-
-# Associate route table to private subnet EC2
-resource "aws_route_table_association" "private_rta_EC2" {
-  subnet_id      = aws_subnet.private_subnet_EC2.id
-  route_table_id = aws_route_table.private_rt_EC2.id
-}
-
-# Associate route table to private subnet EC2_2       
-resource "aws_route_table_association" "private_rta_EC2_2" {
-  subnet_id      = aws_subnet.private_subnet_EC2_2.id
-  route_table_id = aws_route_table.private_rt_EC2_2.id
-} 
-
-# IAM Role for EC2 with S3 access
-resource "aws_iam_role" "ec2_s3_role" {
-  name = "ec2_s3_access_role"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
-      Principal = {
-        Service = "ec2.amazonaws.com"
-      }
-    }]
-  })
-}
-
-# Policy - What EC2 can do with S3
-resource "aws_iam_policy" "ec2_s3_policy" {
-  name = "ec2_s3_access_policy"
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect   = "Allow"
-      Action   = ["s3:PutObject", "s3:GetObject", "s3:ListBucket"]
-      Resource = [
-        "arn:aws:s3:::cloning-app-storage",
-        "arn:aws:s3:::cloning-app-storage/*"
-      ]
-    }]
-  })
-}
-
-# Attach the policy to the role
-resource "aws_iam_role_policy_attachment" "ec2_s3_attach" {
-  role       = aws_iam_role.ec2_s3_role.name
-  policy_arn = aws_iam_policy.ec2_s3_policy.arn
-}
-
-# IAM Instance Profile to attach the role to the EC2
-resource "aws_iam_instance_profile" "ec2_s3_profile" {
-  name = "ec2_s3_profile"
-  role = aws_iam_role.ec2_s3_role.name
-}
-
-# AMI Amazon Linux 2 system image
-data "aws_ami" "amazon_linux" {
-  most_recent = true
-  owners      = ["amazon"]
-
-  filter {
-    name   = "name"
-    values = ["amzn2-ami-hvm-*-x86_64-gp2"]
-  }
-}
-
-# Persistent Volume for MongoDB (EBS)
-resource "aws_ebs_volume" "mongo_data" {
-  availability_zone = var.availability_zone
-  size              = 10
-
-  tags = {
-    Name = "mongo_data_volume"
-    Backup = "MongoDB"
-  }
-}
-
-# Persistent Volume for MongoDB 2 (EBS) 
-resource "aws_ebs_volume" "mongo_data_2" {
-  availability_zone = var.availability_zone2
-  size              = 10
-
-  tags = {
-    Name = "mongo_data_volume_2"
-    Backup = "MongoDB"
-  }
-}
-
-# S3 bucket
-resource "aws_s3_bucket" "storage" {
-  bucket = "cloning-app-storage"
-
-  tags = {
-    Name        = "CloningAppStorage"
-    Environment = "Dev"
-  }
-}
-
-#Bucket policy to block public access
-resource "aws_s3_bucket_public_access_block" "storage_pab" {
-  bucket = aws_s3_bucket.storage.id
-
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
-}
-
-#Versioning for S3 bucket
-resource "aws_s3_bucket_versioning" "storage_versioning" {
-  bucket = aws_s3_bucket.storage.id
-
-  versioning_configuration {
-    status = "Enabled"
-  }
-}
-
-# Security Group for ALB
-resource "aws_security_group" "alb_sg" {
-  name        = "alb-sg"
-  description = "Allow HTTP to ALB"
-  vpc_id      = aws_vpc.vpc1.id
+# Security Groups
+resource "aws_security_group" "alb" {
+  name_prefix = "heroku-clone-alb-"
+  vpc_id      = aws_vpc.main.id
 
   ingress {
     from_port   = 80
@@ -301,237 +78,22 @@ resource "aws_security_group" "alb_sg" {
   }
 }
 
-# Application Load Balancer
-resource "aws_lb" "app_alb" {
-  name               = "notaboringname-alb"
-  load_balancer_type = "application"
-  security_groups    = [aws_security_group.alb_sg.id]
-  subnets            = [aws_subnet.public_subnet.id, aws_subnet.public_subnet_2.id]
-  idle_timeout       = 60
-  enable_deletion_protection = false
-
-  tags = {
-    Name = "notaboringname-alb"
-  }
-}
-
-# Target Group
-resource "aws_lb_target_group" "app_tg" {
-  name     = "notaboringname-tg"
-  port     = var.service_port
-  protocol = "HTTP"
-  vpc_id   = aws_vpc.vpc1.id
-
-  health_check {
-    enabled             = true
-    path                = var.alb_health_check_path
-    healthy_threshold   = 2
-    unhealthy_threshold = 2
-    timeout             = 5
-    interval            = 15
-    matcher             = "200-399"
-  }
-}
-
-# HTTP listener forwarding (enabled when enable_https=false)
-resource "aws_lb_listener" "http_forward" {
-  count             = var.enable_https ? 0 : 1
-  load_balancer_arn = aws_lb.app_alb.arn
-  port              = 80
-  protocol          = "HTTP"
-
-  default_action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.app_tg.arn
-  }
-}
-
-# HTTP listener redirect (enabled when enable_https=true)
-resource "aws_lb_listener" "http_redirect" {
-  count             = var.enable_https ? 1 : 0
-  load_balancer_arn = aws_lb.app_alb.arn
-  port              = 80
-  protocol          = "HTTP"
-
-  default_action {
-    type = "redirect"
-
-    redirect {
-      port        = "443"
-      protocol    = "HTTPS"
-      status_code = "HTTP_301"
-    }
-  }
-}
-
-# HTTPS listener (enabled when enable_https=true)
-resource "aws_lb_listener" "https" {
-  count             = var.enable_https ? 1 : 0
-  load_balancer_arn = aws_lb.app_alb.arn
-  port              = 443
-  protocol          = "HTTPS"
-  ssl_policy        = "ELBSecurityPolicy-2016-08"
-  certificate_arn   = var.acm_certificate_arn
-
-  default_action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.app_tg.arn
-  }
-}
-
-# Launch Template
-resource "aws_launch_template" "app_lt" {
-  name_prefix   = "notaboringname-lt-"
-  image_id      = data.aws_ami.amazon_linux.id
-  instance_type = var.instance_type
-  vpc_security_group_ids = [aws_security_group.sg1.id]
-
-  iam_instance_profile {
-    name = aws_iam_instance_profile.ec2_s3_profile.name
-  }
-
-  user_data = base64encode(<<-EOF
-    #!/bin/bash
-    yum update -y
-    amazon-linux-extras install docker -y
-    service docker start
-    usermod -a -G docker ec2-user
-    curl -L "https://github.com/docker/compose/releases/download/v2.20.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-    chmod +x /usr/local/bin/docker-compose
-  EOF
-  )
-
-  tag_specifications {
-    resource_type = "instance"
-
-    tags = {
-      Name = "notaboringname_asg_ec2"
-    }
-  }
-}
-
-# Auto Scaling Group
-resource "aws_autoscaling_group" "app_asg" {
-  name                = "notaboringname-asg"
-  desired_capacity    = var.asg_desired_capacity
-  max_size            = var.asg_max_size
-  min_size            = var.asg_min_size
-  vpc_zone_identifier = [aws_subnet.private_subnet_EC2.id, aws_subnet.private_subnet_EC2_2.id]
-
-  launch_template {
-    id      = aws_launch_template.app_lt.id
-    version = "$Latest"
-  }
-
-  target_group_arns = [aws_lb_target_group.app_tg.arn]
-
-  health_check_type         = "EC2"
-  health_check_grace_period = 120
-
-  tag {
-    key                 = "Name"
-    value               = "notaboringname_asg_ec2"
-    propagate_at_launch = true
-  }
-}
-
-# Outputs
-output "s3_bucket_name" {
-  value = aws_s3_bucket.storage.bucket
-}
-
-# Private Subnet and NAT for Mongo
-resource "aws_subnet" "private_subnet_Mongo" {
-  vpc_id                  = aws_vpc.vpc1.id
-  cidr_block              = var.private_subnet_cidr_Mongo
-  availability_zone       = var.availability_zone
-  map_public_ip_on_launch = false
-
-  tags = {
-    Name = "private-subnet-mongo"
-  }
-}
-
-# Second Private Subnet for Mongo 2 
-resource "aws_subnet" "private_subnet_Mongo_2" {
-  vpc_id                  = aws_vpc.vpc1.id
-  cidr_block              = var.private_subnet_cidr_Mongo_2
-  availability_zone       = var.availability_zone2
-  map_public_ip_on_launch = false   
-  tags = {
-    Name = "private-subnet-mongo-2"
-  }
-}
-
-# NAT Gateway
-resource "aws_nat_gateway" "nat" {
-  count         = var.enable_nat_gateway ? 1 : 0
-  allocation_id = var.enable_nat_gateway ? aws_eip.nat_eip[0].id : null
-  subnet_id     = aws_subnet.public_subnet.id
-
-  tags = {
-    Name = "vpc1-nat"
-  }
-
-  depends_on = [aws_internet_gateway.igw]
-}
-
-# Private Route Table for Mongo_1
-resource "aws_route_table" "private_rt_Mongo" {
-  vpc_id = aws_vpc.vpc1.id
-
-  tags = {
-    Name = "private-route-table_Mongo"
-  }
-}
-
-# Private Route Table for Mongo_2
-resource "aws_route_table" "private_rt_Mongo_2" {
-  vpc_id = aws_vpc.vpc1.id    
-  tags = {
-    Name = "private-route-table_Mongo_2"
-  }
-}
-
-# Route to internet via NAT
-resource "aws_route" "private_to_internet_via_nat" {
-  count                  = var.enable_nat_gateway ? 1 : 0
-  route_table_id         = aws_route_table.private_rt_Mongo.id
-  destination_cidr_block = "0.0.0.0/0"
-  nat_gateway_id         = aws_nat_gateway.nat[0].id
-}
-# Route to internet via NAT for Mongo_2
-resource "aws_route" "private_Mongo_2_to_internet_via_nat" {
-  count                  = var.enable_nat_gateway ? 1 : 0
-  route_table_id         = aws_route_table.private_rt_Mongo_2.id
-  destination_cidr_block = "0.0.0.0/0"
-  nat_gateway_id         = aws_nat_gateway.nat[0].id
-}
-
-# Associate private route table to private subnet
-resource "aws_route_table_association" "private_rta" {
-  subnet_id      = aws_subnet.private_subnet_Mongo.id
-  route_table_id = aws_route_table.private_rt_Mongo.id
-}
-
-# Associate private route table to private subnet Mongo_2
-resource "aws_route_table_association" "private_rta_2" {
-  subnet_id      = aws_subnet.private_subnet_Mongo_2.id
-  route_table_id = aws_route_table.private_rt_Mongo_2.id
-}
-
-# MongoDB Security Group (private)
-resource "aws_security_group" "mongo_sg" {
-  name        = "mongo-sg"
-  description = "Allow MongoDB only from app SG"
-  vpc_id      = aws_vpc.vpc1.id
+resource "aws_security_group" "instances" {
+  name_prefix = "heroku-clone-instances-"
+  vpc_id      = aws_vpc.main.id
 
   ingress {
-    from_port       = 27017
-    to_port         = 27017
+    from_port       = 8080
+    to_port         = 8090
     protocol        = "tcp"
-    security_groups = [aws_security_group.sg1.id]
-    description     = "App SG to Mongo"
+    security_groups = [aws_security_group.alb.id]
+  }
+
+  ingress {
+    from_port = 22
+    to_port   = 22
+    protocol  = "tcp"
+    self      = true  # Instances can SSH to each other
   }
 
   egress {
@@ -542,71 +104,264 @@ resource "aws_security_group" "mongo_sg" {
   }
 }
 
-# MongoDB EC2 in private subnet
-resource "aws_instance" "mongo" {
-  ami                         = data.aws_ami.amazon_linux.id
-  instance_type               = var.instance_type
-  subnet_id                   = aws_subnet.private_subnet_Mongo.id
-  vpc_security_group_ids      = [aws_security_group.mongo_sg.id]
-  iam_instance_profile        = aws_iam_instance_profile.ec2_s3_profile.name
-  associate_public_ip_address = false
-  availability_zone           = var.availability_zone
+# Redis for session/state management
+resource "aws_elasticache_subnet_group" "main" {
+  name       = "heroku-clone-cache"
+  subnet_ids = aws_subnet.private[*].id
+}
 
-  tags = {
-    Name = "mongo_private_ec2"
+resource "aws_elasticache_replication_group" "main" {
+  replication_group_id       = "heroku-clone"
+  description                = "Redis for workload migration"
+  node_type                  = "cache.t3.micro"
+  port                       = 6379
+  num_cache_clusters         = 2
+  automatic_failover_enabled = true
+  multi_az_enabled          = true
+  subnet_group_name         = aws_elasticache_subnet_group.main.name
+  security_group_ids        = [aws_security_group.instances.id]
+}
+
+# S3 for app storage
+resource "aws_s3_bucket" "apps" {
+  bucket = "heroku-clone-apps-${random_string.suffix.result}"
+}
+
+resource "random_string" "suffix" {
+  length  = 8
+  special = false
+  upper   = false
+}
+
+# SQS for migration coordination
+resource "aws_sqs_queue" "migration" {
+  name = "heroku-clone-migration"
+}
+
+# IAM for instances
+resource "aws_iam_role" "instance" {
+  name = "heroku-clone-instance-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = { Service = "ec2.amazonaws.com" }
+    }]
+  })
+}
+
+resource "aws_iam_policy" "instance" {
+  name = "heroku-clone-instance-policy"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject", "s3:PutObject", "s3:ListBucket",
+          "sqs:SendMessage", "sqs:ReceiveMessage", "sqs:DeleteMessage",
+          "ec2:DescribeInstances", "ec2:CreateTags"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "instance" {
+  role       = aws_iam_role.instance.name
+  policy_arn = aws_iam_policy.instance.arn
+}
+
+resource "aws_iam_instance_profile" "instance" {
+  name = "heroku-clone-instance-profile"
+  role = aws_iam_role.instance.name
+}
+
+# Application Load Balancer
+resource "aws_lb" "main" {
+  name               = "heroku-clone-alb"
+  internal           = false
+  load_balancer_type = "application"
+  security_groups    = [aws_security_group.alb.id]
+  subnets            = aws_subnet.public[*].id
+}
+
+# Target Groups for Green (baseline) and Blue (spot)
+resource "aws_lb_target_group" "green" {
+  name     = "heroku-clone-green"
+  port     = 8080
+  protocol = "HTTP"
+  vpc_id   = aws_vpc.main.id
+
+  health_check {
+    path                = "/health"
+    healthy_threshold   = 2
+    unhealthy_threshold = 2
+    timeout             = 5
+    interval            = 15
   }
 
-  user_data = <<-EOF
-    #!/bin/bash
-    yum update -y
-    amazon-linux-extras install epel -y || true
-    yum install -y mongodb-org || true
-    mkdir -p /data/db
-    chown -R mongod:mongod /data/db || true
-    systemctl enable mongod || true
-    systemctl start mongod || true
-  EOF
+  tags = { Stage = "green-baseline" }
 }
 
-# MongoDB EC2 in private subnet 2
-resource "aws_instance" "mongo_2" {
-  ami                         = data.aws_ami.amazon_linux.id
-  instance_type               = var.instance_type
-  subnet_id                   = aws_subnet.private_subnet_Mongo_2.id
-  vpc_security_group_ids      = [aws_security_group.mongo_sg.id]
-  iam_instance_profile        = aws_iam_instance_profile.ec2_s3_profile.name
-  associate_public_ip_address = false
-  availability_zone           = var.availability_zone2
+resource "aws_lb_target_group" "blue" {
+  name     = "heroku-clone-blue"
+  port     = 8080
+  protocol = "HTTP"
+  vpc_id   = aws_vpc.main.id
 
-  tags = {
-    Name = "mongo_private_ec2_2"
+  health_check {
+    path                = "/health"
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+    timeout             = 10
+    interval            = 30
   }
 
-  user_data = <<-EOF
-    #!/bin/bash
-    yum update -y
-    amazon-linux-extras install epel -y || true
-    yum install -y mongodb-org || true
-    mkdir -p /data/db
-    chown -R mongod:mongod /data/db || true
-    systemctl enable mongod || true
-    systemctl start mongod || true
-  EOF
+  tags = { Stage = "blue-production" }
 }
 
+# ALB Listener with weighted routing (starts 100% green, migrates to blue)
+resource "aws_lb_listener" "main" {
+  load_balancer_arn = aws_lb.main.arn
+  port              = "80"
+  protocol          = "HTTP"
 
-# Attach the EBS to the private Mongo instance
-resource "aws_volume_attachment" "mongo_data_attach_private" {
-  device_name = "/dev/xvdf"
-  volume_id   = aws_ebs_volume.mongo_data.id
-  instance_id = aws_instance.mongo.id
+  default_action {
+    type = "forward"
+    forward {
+      target_group {
+        arn    = aws_lb_target_group.green.arn
+        weight = var.green_weight  # Start at 100, migrate to 0
+      }
+      target_group {
+        arn    = aws_lb_target_group.blue.arn
+        weight = var.blue_weight   # Start at 0, migrate to 100
+      }
+    }
+  }
 }
 
-# Attach the EBS 2 to the private Mongo instance
-resource "aws_volume_attachment" "mongo_data_attach_private_2" {
-  device_name = "/dev/xvdg"
-  volume_id   = aws_ebs_volume.mongo_data_2.id
-  instance_id = aws_instance.mongo_2.id
+# Baseline EC2 Instance (Green Stage - Immediate Deployment)
+resource "aws_instance" "baseline" {
+  ami                    = data.aws_ami.amazon_linux.id
+  instance_type          = var.baseline_instance_type
+  subnet_id              = aws_subnet.public[0].id
+  vpc_security_group_ids = [aws_security_group.instances.id]
+  iam_instance_profile   = aws_iam_instance_profile.instance.name
+  key_name              = var.key_name
+
+  user_data = base64encode(templatefile("${path.module}/baseline_user_data.sh", {
+    redis_endpoint = aws_elasticache_replication_group.main.primary_endpoint_address
+    s3_bucket      = aws_s3_bucket.apps.bucket
+    sqs_queue_url  = aws_sqs_queue.migration.url
+    region         = var.region
+  }))
+
+  tags = {
+    Name  = "heroku-clone-baseline"
+    Stage = "green-baseline"
+    Role  = "immediate-deployment"
+  }
 }
 
+# Auto Scaling Group for Spot Instances (Blue Stage - Production)
+resource "aws_launch_template" "spot" {
+  name_prefix   = "heroku-clone-spot-"
+  image_id      = data.aws_ami.amazon_linux.id
+  instance_type = var.spot_instance_type
+  key_name      = var.key_name
+  vpc_security_group_ids = [aws_security_group.instances.id]
 
+  iam_instance_profile {
+    name = aws_iam_instance_profile.instance.name
+  }
+
+  user_data = base64encode(templatefile("${path.module}/spot_user_data.sh", {
+    baseline_ip    = aws_instance.baseline.private_ip
+    redis_endpoint = aws_elasticache_replication_group.main.primary_endpoint_address
+    s3_bucket      = aws_s3_bucket.apps.bucket
+    sqs_queue_url  = aws_sqs_queue.migration.url
+    region         = var.region
+  }))
+
+  tag_specifications {
+    resource_type = "instance"
+    tags = {
+      Name  = "heroku-clone-spot"
+      Stage = "blue-production"
+      Role  = "cost-optimized-production"
+    }
+  }
+}
+
+resource "aws_autoscaling_group" "spot" {
+  name                = "heroku-clone-spot-asg"
+  vpc_zone_identifier = aws_subnet.public[*].id
+  target_group_arns   = [aws_lb_target_group.blue.arn]
+  health_check_type   = "ELB"
+  health_check_grace_period = 300
+
+  min_size         = 0  # Start with 0, scale up when migration begins
+  max_size         = var.spot_max_size
+  desired_capacity = 0
+
+  mixed_instances_policy {
+    launch_template {
+      launch_template_specification {
+        launch_template_id = aws_launch_template.spot.id
+        version           = "$Latest"
+      }
+    }
+
+    instances_distribution {
+      on_demand_base_capacity                  = 0
+      on_demand_percentage_above_base_capacity = 10
+      spot_allocation_strategy                 = "diversified"
+      spot_instance_pools                      = 4
+    }
+  }
+
+  tag {
+    key                 = "Name"
+    value               = "heroku-clone-spot-asg"
+    propagate_at_launch = false
+  }
+}
+
+# Target Group Attachments
+resource "aws_lb_target_group_attachment" "baseline" {
+  target_group_arn = aws_lb_target_group.green.arn
+  target_id        = aws_instance.baseline.id
+  port             = 8080
+}
+
+data "aws_ami" "amazon_linux" {
+  most_recent = true
+  owners      = ["amazon"]
+  filter {
+    name   = "name"
+    values = ["amzn2-ami-hvm-*-x86_64-gp2"]
+  }
+}
+
+# Outputs
+output "alb_dns_name" {
+  value = aws_lb.main.dns_name
+}
+
+output "baseline_ip" {
+  value = aws_instance.baseline.public_ip
+}
+
+output "redis_endpoint" {
+  value = aws_elasticache_replication_group.main.primary_endpoint_address
+}
+
+output "migration_command" {
+  value = "aws sqs send-message --queue-url ${aws_sqs_queue.migration.url} --message-body 'start-migration' --region ${var.region}"
+}
