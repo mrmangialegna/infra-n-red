@@ -1,100 +1,54 @@
-# lambda.tf
+#!/bin/bash
+set -e
 
-data "archive_file" "lambda_zip" {
-  type        = "zip"
-  output_path = "${path.module}/lambda_ebs_snapshot.zip"
-  
-  source_file  = "${path.module}/lambda_function.py"
+# Variables
+REGION="${region}"
+S3_BUCKET="${s3_bucket}"
+MONGODB_INSTANCE_TYPE="${mongodb_instance_type}"
+MONGODB_VOLUME_SIZE="${mongodb_volume_size}"
+MONGODB_SUBNET_CIDR="${mongodb_subnet_cidr}"
+
+# Log function
+log() {
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] $*"
 }
 
-resource "aws_lambda_function" "ebs_snapshot" {
-  filename         = data.archive_file.lambda_zip.output_path
-  function_name    = "ebs_snapshot_function"
-  role             = aws_iam_role.lambda_ebs_snapshot_role.arn
-  handler          = "lambda_function.lambda_handler"
-  runtime          = "python3.11"
-  source_code_hash = filebase64sha256(data.archive_file.lambda_zip.output_path)
-  timeout          = 60
-  
-  depends_on = [data.archive_file.lambda_zip]
-}
+log "Aggiornamento pacchetti di sistema..."
+yum update -y
 
-resource "aws_iam_role" "lambda_ebs_snapshot_role" {
-  name = "lambda_ebs_snapshot_role"
+log "Installazione AWS CLI..."
+if ! command -v aws &> /dev/null; then
+    curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip"
+    unzip /tmp/awscliv2.zip -d /tmp
+    /tmp/aws/install
+fi
 
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
-      Principal = {
-        Service = "lambda.amazonaws.com"
-      }
-    }]
-  })
-}
+log "Configurazione repository MongoDB..."
+cat <<EOF >/etc/yum.repos.d/mongodb-org-7.repo
+[mongodb-org-7]
+name=MongoDB Repository
+baseurl=https://repo.mongodb.org/yum/amazon/2/mongodb-org/7/x86_64/
+gpgcheck=1
+enabled=1
+gpgkey=https://www.mongodb.org/static/pgp/server-7.0.asc
+EOF
 
-resource "aws_iam_policy" "lambda_snapshot_policy" {
-  name = "lambda_snapshot_policy"
-  
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "ec2:CreateSnapshot",
-          "ec2:CreateTags", 
-          "ec2:DescribeVolumes",
-          "ec2:DescribeSnapshots"
-        ]
-        Resource = "*"
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "logs:CreateLogGroup",
-          "logs:CreateLogStream",
-          "logs:PutLogEvents"
-        ]
-        Resource = "arn:aws:logs:*:*:*"
-      }
-    ]
-  })
-}
+log "Installazione MongoDB..."
+yum install -y mongodb-org
 
-resource "aws_iam_role_policy_attachment" "lambda_snapshot_policy" {
-  role       = aws_iam_role.lambda_ebs_snapshot_role.name
-  policy_arn = aws_iam_policy.lambda_snapshot_policy.arn
-}
+log "Creazione cartella dati /data/db..."
+mkdir -p /data/db
+chown -R mongod:mongod /data/db
 
-# CloudWatch scheduling
-resource "aws_cloudwatch_event_rule" "daily_snapshot" {
-  name                = "daily-snapshot-rule"
-  schedule_expression = var.backup_schedule
-}
+log "Avvio e abilitazione servizio MongoDB..."
+systemctl enable mongod
+systemctl start mongod
 
-resource "aws_cloudwatch_event_target" "lambda_target" {
-  rule      = aws_cloudwatch_event_rule.daily_snapshot.name
-  target_id = "lambda-ebs-snapshot"
-  arn       = aws_lambda_function.ebs_snapshot.arn
-}
+# Download data from S3 if bucket is specified
+if [[ -n "$S3_BUCKET" ]]; then
+    log "Scarico dati iniziali da S3 bucket $S3_BUCKET..."
+    aws s3 cp s3://$S3_BUCKET/mongodb-init/ /data/db/ --recursive --region $REGION
+    chown -R mongod:mongod /data/db
+fi
 
-resource "aws_lambda_permission" "allow_cloudwatch" {
-  statement_id  = "AllowExecutionFromCloudWatch"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.ebs_snapshot.function_name
-  principal     = "events.amazonaws.com"
-  source_arn    = aws_cloudwatch_event_rule.daily_snapshot.arn
-}
-
-# variables.tf
-variable "backup_schedule" {
-  description = "Cron expression for the backup schedule"
-  type        = string
-  default     = "cron(0 2 * * ? *)"  # Daily at 2 AM
-}
-
-### terraform.tfvars
-
-
+log "MongoDB configurato con successo nella regione $REGION"

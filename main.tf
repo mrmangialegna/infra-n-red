@@ -261,21 +261,7 @@ resource "aws_instance" "baseline" {
   vpc_security_group_ids = [aws_security_group.instances.id]
   iam_instance_profile   = aws_iam_instance_profile.instance.name
   key_name              = var.key_name
-/*/
-  user_data = base64encode(templatefile("baseline_user_data.sh", {
-    redis_endpoint = aws_elasticache_replication_group.main.primary_endpoint_address
-    s3_bucket      = aws_s3_bucket.apps.bucket
-    sqs_queue_url  = aws_sqs_queue.migration.url
-    region         = var.region
-  }))
 
-  tags = {
-    Name  = "heroku-clone-baseline"
-    Stage = "green-baseline"
-    Role  = "immediate-deployment"
-  }
-}
-/**/
 # Call to baseline_user_data.sh with replacements
 user_data = base64encode(
   replace(
@@ -457,13 +443,20 @@ resource "aws_instance" "mongodb" {
   iam_instance_profile   = aws_iam_instance_profile.instance.name
   availability_zone      = data.aws_availability_zones.available.names[0]
 
-  user_data_base64 = base64encode(file("${path.module}/mongodb_user_data.sh")) 
+  user_data = base64encode(templatefile("${path.module}/mongodb_user_data.sh", {
+    region                 = var.region
+    s3_bucket              = aws_s3_bucket.apps.bucket
+    mongodb_instance_type  = var.mongodb_instance_type
+    mongodb_volume_size    = var.mongodb_volume_size
+    mongodb_subnet_cidr    = var.mongodb_subnet_cidr
+  }))
 
   tags = merge(var.default_tags, {
     Name = "${var.project_name}-mongodb"
     Role = "database"
   })
 }
+
 
 # Volume attachment
 resource "aws_volume_attachment" "mongodb" {
