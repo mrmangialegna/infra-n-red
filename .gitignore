@@ -8,8 +8,5 @@
 .terraformrc
 terraform.rc
 
-# Large files
+# Exclude lambda.tf
 lambda.tf
-baseline_user_data.sh
-spot_user_data.sh
-code_analyzer.py
