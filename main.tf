@@ -261,8 +261,8 @@ resource "aws_instance" "baseline" {
   vpc_security_group_ids = [aws_security_group.instances.id]
   iam_instance_profile   = aws_iam_instance_profile.instance.name
   key_name              = var.key_name
-
-  user_data = base64encode(templatefile("${path.module}/baseline_user_data.sh", {
+/*/
+  user_data = base64encode(templatefile("baseline_user_data.sh", {
     redis_endpoint = aws_elasticache_replication_group.main.primary_endpoint_address
     s3_bucket      = aws_s3_bucket.apps.bucket
     sqs_queue_url  = aws_sqs_queue.migration.url
@@ -274,6 +274,28 @@ resource "aws_instance" "baseline" {
     Stage = "green-baseline"
     Role  = "immediate-deployment"
   }
+}
+/**/
+# Call to baseline_user_data.sh with replacements
+user_data = base64encode(
+  replace(
+    replace(
+      replace(
+        replace(
+          file("${path.module}/baseline_user_data.sh"),
+          "$${redis_endpoint}",
+          aws_elasticache_replication_group.main.primary_endpoint_address
+        ),
+        "$${s3_bucket}",
+        aws_s3_bucket.apps.bucket
+      ),
+      "$${sqs_queue_url}",
+      aws_sqs_queue.migration.url
+    ),
+    "$${region}",
+    var.region
+  )
+)
 }
 
 # Auto Scaling Group for Spot Instances (Blue Stage - Production)
@@ -371,4 +393,81 @@ output "redis_endpoint" {
 
 output "migration_command" {
   value = "aws sqs send-message --queue-url ${aws_sqs_queue.migration.url} --message-body 'start-migration' --region ${var.region}"
+}
+
+
+# Private subnet for MongoDB
+resource "aws_subnet" "mongodb" {
+  vpc_id            = aws_vpc.main.id
+  cidr_block        = var.mongodb_subnet_cidr
+  availability_zone = data.aws_availability_zones.available.names[0]
+  tags = merge(var.default_tags, { Name = "${var.project_name}-mongodb-subnet" })
+}
+
+# Route table for MongoDB subnet
+resource "aws_route_table" "mongodb" {
+  vpc_id = aws_vpc.main.id
+  tags = { Name = "mongodb-rt" }
+}
+
+resource "aws_route_table_association" "mongodb" {
+  subnet_id      = aws_subnet.mongodb.id
+  route_table_id = aws_route_table.mongodb.id
+}
+
+# Security group for MongoDB
+resource "aws_security_group" "mongodb" {
+  name_prefix = "heroku-clone-mongodb-"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+    from_port       = 27017
+    to_port         = 27017
+    protocol        = "tcp"
+    security_groups = [aws_security_group.instances.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+# EBS volume for MongoDB
+resource "aws_ebs_volume" "mongodb" {
+  availability_zone = data.aws_availability_zones.available.names[0]
+  size              = var.mongodb_volume_size
+  type              = "gp3"
+  encrypted         = true
+
+  tags = merge(var.default_tags, {
+    Name   = "${var.project_name}-mongodb-volume"
+    Backup = "MongoDB"
+  })
+}
+
+# MongoDB instance
+resource "aws_instance" "mongodb" {
+  ami                    = data.aws_ami.amazon_linux.id
+  instance_type          = var.mongodb_instance_type
+  subnet_id              = aws_subnet.mongodb.id
+  vpc_security_group_ids = [aws_security_group.mongodb.id]
+  iam_instance_profile   = aws_iam_instance_profile.instance.name
+  availability_zone      = data.aws_availability_zones.available.names[0]
+
+  user_data_base64 = base64encode(file("${path.module}/mongodb_user_data.sh")) 
+
+  tags = merge(var.default_tags, {
+    Name = "${var.project_name}-mongodb"
+    Role = "database"
+  })
+}
+
+# Volume attachment
+resource "aws_volume_attachment" "mongodb" {
+  device_name = "/dev/xvdf"
+  volume_id   = aws_ebs_volume.mongodb.id
+  instance_id = aws_instance.mongodb.id
 }

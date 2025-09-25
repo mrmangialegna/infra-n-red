@@ -283,3 +283,11 @@ variable "additional_tags" {
   type        = map(string)
   default     = {}
 }
+
+# MongoDB CONFIGURATION
+
+variable "mongodb_subnet_cidr" { default = "10.0.100.0/24" }
+
+variable "mongodb_instance_type" { default = "t3.medium" } 
+
+variable "mongodb_volume_size" { default = 20 }

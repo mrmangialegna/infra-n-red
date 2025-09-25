@@ -1,26 +1,24 @@
-# Archive data source cread external python file
+# lambda.tf
+
 data "archive_file" "lambda_zip" {
   type        = "zip"
   output_path = "${path.module}/lambda_ebs_snapshot.zip"
   
   source_file  = "${path.module}/lambda_function.py"
-  output_path  = "${path.module}/lambda_ebs_snapshot.zip"
 }
 
-# Lambda function
 resource "aws_lambda_function" "ebs_snapshot" {
   filename         = data.archive_file.lambda_zip.output_path
   function_name    = "ebs_snapshot_function"
   role             = aws_iam_role.lambda_ebs_snapshot_role.arn
   handler          = "lambda_function.lambda_handler"
   runtime          = "python3.11"
-  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+  source_code_hash = filebase64sha256(data.archive_file.lambda_zip.output_path)
   timeout          = 60
   
   depends_on = [data.archive_file.lambda_zip]
 }
 
-# IAM Role for Lambda
 resource "aws_iam_role" "lambda_ebs_snapshot_role" {
   name = "lambda_ebs_snapshot_role"
 
@@ -36,7 +34,6 @@ resource "aws_iam_role" "lambda_ebs_snapshot_role" {
   })
 }
 
-# IAM Policy for Lambda
 resource "aws_iam_policy" "lambda_snapshot_policy" {
   name = "lambda_snapshot_policy"
   
@@ -91,14 +88,13 @@ resource "aws_lambda_permission" "allow_cloudwatch" {
   source_arn    = aws_cloudwatch_event_rule.daily_snapshot.arn
 }
 
----
+# variables.tf
+variable "backup_schedule" {
+  description = "Cron expression for the backup schedule"
+  type        = string
+  default     = "cron(0 2 * * ? *)"  # Daily at 2 AM
+}
 
-# variables.tf - Aggiungi questa variabile
+### terraform.tfvars
 
 
----
-
-# terraform.tfvars - Configurabile
-
-backup_schedule = "cron(0 2 * * ? *)"  # Daily at 2 AM
-# backup_schedule = "cron(0 */6 * * ? *)"  # Every 6 hours
