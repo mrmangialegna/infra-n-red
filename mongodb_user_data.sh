@@ -13,17 +13,17 @@ log() {
     echo "[$(date +'%Y-%m-%d %H:%M:%S')] $*"
 }
 
-log "Aggiornamento pacchetti di sistema..."
+log "Update system packages..."
 yum update -y
 
-log "Installazione AWS CLI..."
+log "Install AWS CLI..."
 if ! command -v aws &> /dev/null; then
     curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip"
     unzip /tmp/awscliv2.zip -d /tmp
     /tmp/aws/install
 fi
 
-log "Configurazione repository MongoDB..."
+log "Configure MongoDB repository..."
 cat <<EOF >/etc/yum.repos.d/mongodb-org-7.repo
 [mongodb-org-7]
 name=MongoDB Repository
@@ -33,22 +33,22 @@ enabled=1
 gpgkey=https://www.mongodb.org/static/pgp/server-7.0.asc
 EOF
 
-log "Installazione MongoDB..."
+log "Install MongoDB..."
 yum install -y mongodb-org
 
-log "Creazione cartella dati /data/db..."
+log "Create data folder /data/db..."
 mkdir -p /data/db
 chown -R mongod:mongod /data/db
 
-log "Avvio e abilitazione servizio MongoDB..."
+log "Start and enable MongoDB service..."
 systemctl enable mongod
 systemctl start mongod
 
 # Download data from S3 if bucket is specified
 if [[ -n "$S3_BUCKET" ]]; then
-    log "Scarico dati iniziali da S3 bucket $S3_BUCKET..."
+    log "Download initial data from S3 bucket $S3_BUCKET..."
     aws s3 cp s3://$S3_BUCKET/mongodb-init/ /data/db/ --recursive --region $REGION
     chown -R mongod:mongod /data/db
 fi
 
-log "MongoDB configurato con successo nella regione $REGION"
+log "MongoDB configured successfully in the region $REGION"
