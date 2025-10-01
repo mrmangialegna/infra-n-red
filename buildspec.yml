@@ -1,0 +1,94 @@
+version: 0.2
+
+phases:
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $ECR_REPOSITORY_URI
+      - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+      - IMAGE_TAG=${COMMIT_HASH:=latest}
+  build:
+    commands:
+      - echo Build started on `date`
+      - echo Building the Docker image...
+      - |
+        if [ ! -f Dockerfile ]; then
+          # Auto-detect and create Dockerfile
+          if [ -f package.json ]; then
+            cat > Dockerfile << EOF
+        FROM node:18-alpine
+        WORKDIR /app
+        COPY package*.json ./
+        RUN npm install
+        COPY . .
+        EXPOSE 3000
+        CMD ["npm", "start"]
+        EOF
+          elif [ -f requirements.txt ]; then
+            cat > Dockerfile << EOF
+        FROM python:3.9-slim
+        WORKDIR /app
+        COPY requirements.txt .
+        RUN pip install -r requirements.txt
+        COPY . .
+        EXPOSE 8000
+        CMD ["python", "app.py"]
+        EOF
+          else
+            echo "No Dockerfile found and unable to auto-detect framework"
+            exit 1
+          fi
+        fi
+      - docker build -t $ECR_REPOSITORY_URI:latest .
+      - docker tag $ECR_REPOSITORY_URI:latest $ECR_REPOSITORY_URI:$IMAGE_TAG
+  post_build:
+    commands:
+      - echo Build completed on `date`
+      - echo Pushing the Docker images...
+      - docker push $ECR_REPOSITORY_URI:latest
+      - docker push $ECR_REPOSITORY_URI:$IMAGE_TAG
+      - echo Deploying to Kubernetes...
+      - |
+        cat > k8s-deployment.yaml << EOF
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: $APP_NAME
+          namespace: default
+        spec:
+          replicas: 2
+          selector:
+            matchLabels:
+              app: $APP_NAME
+          template:
+            metadata:
+              labels:
+                app: $APP_NAME
+            spec:
+              containers:
+              - name: $APP_NAME
+                image: $ECR_REPOSITORY_URI:$IMAGE_TAG
+                ports:
+                - containerPort: 3000
+                env:
+                - name: DATABASE_URL
+                  value: "postgresql://$RDS_USERNAME:$RDS_PASSWORD@$RDS_ENDPOINT:5432/paasdb"
+                - name: REDIS_URL
+                  value: "redis://$REDIS_ENDPOINT:6379"
+                - name: APP_ID
+                  value: $APP_NAME
+        ---
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: $APP_NAME-service
+          namespace: default
+        spec:
+          selector:
+            app: $APP_NAME
+          ports:
+          - port: 80
+            targetPort: 3000
+          type: ClusterIP
+        EOF
+      - kubectl apply -f k8s-deployment.yaml
