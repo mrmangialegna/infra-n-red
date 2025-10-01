@@ -97,7 +97,7 @@ resource "aws_codebuild_project" "build_project" {
     
     environment_variable {
       name  = "REDIS_ENDPOINT"
-      value = aws_elasticache_replication_group.redis_cluster.primary_endpoint_address
+      value = "redis://redis-service:6379"
     }
   }
 
@@ -189,11 +189,3 @@ resource "aws_cloudwatch_event_target" "s3_upload_target" {
   arn       = aws_sfn_state_machine.build_state_machine.arn
 }
 
-# -------------------------
-# Permission for EventBridge to invoke Step Functions
-# -------------------------
-resource "aws_sfn_state_machine_permission" "allow_eventbridge" {
-  state_machine_arn = aws_sfn_state_machine.build_state_machine.arn
-  principal         = "events.amazonaws.com"
-  action            = "states:StartExecution"
-}

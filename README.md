@@ -39,8 +39,18 @@ terraform plan
 
 4. Apply Infrastructure:
 ```bash
-terraform apply
+terraform apply -var="domain_name=yourdomain.com" -var="rds_password=YourSecurePassword123!" -var="master_ami_id=ami-12345678" -var="worker_ami_id=ami-87654321" -var="key_pair_name=your-key-pair"
 ```
+
+   Or create a `terraform.tfvars` file:
+   ```hcl
+   domain_name = "yourdomain.com"
+   rds_password = "YourSecurePassword123!"
+   master_ami_id = "ami-12345678"
+   worker_ami_id = "ami-87654321"
+   key_pair_name = "your-key-pair"
+   aws_region = "us-east-1"
+   ```
 
 ## Key Variables
 
@@ -72,7 +82,11 @@ terraform destroy
 
 ## Notes
 
-- Spot instances can be terminated by AWS
-- Cluster Autoscaler automatically manages worker nodes
-- Secrets are managed through AWS Secrets Manager
-- CloudWatch monitors CPU, memory, and node health
+- **Spot instances** can be terminated by AWS (cost savings ~70%)
+- **Cluster Autoscaler** automatically manages worker nodes
+- **Redis in-pod** saves ~$12/month vs ElastiCache
+- **VPC Endpoints** save ~$45/month vs NAT Gateway
+- **Secrets** are managed through AWS Secrets Manager
+- **CloudWatch** monitors CPU, memory, and node health
+
+*Costs may vary based on usage and region*

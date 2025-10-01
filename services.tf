@@ -120,17 +120,6 @@ resource "aws_s3_bucket_acl" "code_bucket_acl" {
   acl    = "private"
 }
 
-# -------------------------
-# S3 VPC Endpoint for private access
-# -------------------------
-resource "aws_vpc_endpoint" "s3" {
-  vpc_id       = aws_vpc.paas_vpc.id
-  service_name = "com.amazonaws.${var.aws_region}.s3"
-  
-  tags = {
-    Name = "paas-s3-endpoint"
-  }
-}
 
 # -------------------------
 # RDS PostgreSQL (Unified: Platform + App Data)
@@ -241,11 +230,6 @@ resource "aws_vpc_endpoint" "secrets_manager" {
 resource "aws_secretsmanager_secret" "app_secrets" {
   name        = "paas-app-secrets"
   description = "Secrets for PaaS applications"
-  
-  # Enable automatic rotation
-  rotation_rules {
-    automatically_after_days = 30
-  }
 
   tags = {
     Name = "paas-app-secrets"
