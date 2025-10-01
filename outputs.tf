@@ -72,7 +72,6 @@ output "rds_port" {
 # -------------------------
 # Redis in-pod
 # -------------------------
-# Redis will be deployed as Kubernetes pod
 
 output "s3_backup_bucket" {
   description = "S3 backup bucket name"
