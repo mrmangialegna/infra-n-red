@@ -99,6 +99,11 @@ resource "aws_codebuild_project" "build_project" {
       name  = "REDIS_ENDPOINT"
       value = "redis://redis-service:6379"
     }
+    
+    environment_variable {
+      name  = "DOMAIN_NAME"
+      value = var.domain_name
+    }
   }
 
   source {

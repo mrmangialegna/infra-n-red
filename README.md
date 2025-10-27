@@ -12,6 +12,7 @@ Manual PaaS architecture with EC2 + Kubernetes + Spot instances for a PaaS clone
 - Networking: VPC with VPC Endpoints (savings ~$45/month vs. NAT Gateway) + ALB
 - Security: External Secrets Operator for secure management secrets
 
+-----------------------------------------------------
 Prerequisites
 
 1. AWS CLI configured
@@ -19,7 +20,8 @@ Prerequisites
 3. Existing EC2 key pair
 4. Kubernetes-optimized ARM64 AMIs
 
-## Pre-deployment Steps
+-----------------------------------------------------
+Pre-deployment Steps
 
 Before applying Terraform, create the Lambda zip files:
 
@@ -34,7 +36,8 @@ zip -r webhook_handler.zip webhook_handler.py index.py boto3 psycopg2_binary-*.d
 zip secrets_rotation.zip secrets_rotation.py
 ```
 
-## Deploy
+-----------------------------------------------------
+Deploy
 
 1. Configure Variables:
 ```bash
@@ -67,19 +70,21 @@ terraform apply -var="domain_name=yourdomain.com" -var="rds_password=YourSecureP
    aws_region = "us-east-1"
    ```
 
-## Key Variables
+-----------------------------------------------------
+Key Variables
 
 | Variable 
 
 `aws_region` us-east-1
-`master_instance_type`  t4g.small 
+`master_instance_type` t4g.small 
 `worker_instance_type` t4g.micro 
 `master_ami_id` required 
 `worker_ami_id` AMI ID for workers, required 
 `key_pair_name` SSH key pair name, required 
 `rds_password` Required 
 
-## Output
+-----------------------------------------------------
+Output
 
 After deployment, you will get:
 - VPC and subnet IDs
@@ -89,9 +94,10 @@ After deployment, you will get:
 - Step Functions ARN
 - VPC Endpoints for S3/ECR/Secrets Manager
 
-## Post-deployment Configuration
+-----------------------------------------------------
+Post-deployment Configuration
 
-**1. Initialize Database Schema**
+1. Initialize Database Schema
 
 Connect to the RDS instance and run the init_db.sql script:
 
@@ -103,7 +109,7 @@ RDS_ENDPOINT=$(terraform output -raw rds_endpoint)
 psql -h $RDS_ENDPOINT -U paasadmin -d paasdb -f init_db.sql
 ```
 
-**2. Configure kubectl access for CodeBuild:**
+2. Configure kubectl access for CodeBuild:
 
 1. Retrieve your cluster kubeconfig from the master node
 2. Store it in AWS Secrets Manager or SSM Parameter Store
@@ -121,7 +127,7 @@ aws secretsmanager create-secret --name paas/kubeconfig --secret-string file://k
 
 Update CodeBuild IAM role to allow reading from Secrets Manager.
 
-**3. Configure GitHub Webhook**
+3. Configure GitHub Webhook
 
 After deployment, get the API Gateway webhook URL from Terraform outputs:
 
@@ -135,7 +141,7 @@ Configure this URL in your GitHub repository:
 3. Set content type to `application/json`
 4. Enable "Just the push event"
 
-**4. Deploy Your First App**
+4. Deploy Your First App
 
 1. Push code to your GitHub repository
 2. The webhook triggers the Lambda function
@@ -145,7 +151,8 @@ Configure this URL in your GitHub repository:
 6. CodeBuild deploys to Kubernetes
 7. Your app is live!
 
-## Cleanup
+-----------------------------------------------------
+Cleanup
 
 ```bash
 terraform destroy

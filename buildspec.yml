@@ -116,5 +116,26 @@ phases:
           - port: 80
             targetPort: 3000
           type: ClusterIP
+        ---
+        apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata:
+          name: $APP_NAME-ingress
+          namespace: default
+          annotations:
+            nginx.ingress.kubernetes.io/rewrite-target: /
+        spec:
+          ingressClassName: nginx
+          rules:
+          - host: $APP_NAME.${env(DOMAIN_NAME)}
+            http:
+              paths:
+              - path: /
+                pathType: Prefix
+                backend:
+                  service:
+                    name: $APP_NAME-service
+                    port:
+                      number: 80
         EOF
       - kubectl apply -f k8s-deployment.yaml
