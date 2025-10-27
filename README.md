@@ -1,4 +1,4 @@
-# PaaS Infrastructure - Manual Deployment
+# PaaS Infrastructure - Start-up Deployment
 
 Manual PaaS architecture with EC2 + Kubernetes + Spot instances for a PaaS clone.
 
