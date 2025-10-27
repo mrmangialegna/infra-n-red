@@ -49,8 +49,34 @@ phases:
       - docker push $ECR_REPOSITORY_URI:$IMAGE_TAG
       - echo Deploying to Kubernetes...
       - |
+        # Install kubectl
+        curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+        chmod +x kubectl
+        mv kubectl /usr/local/bin/
+        
+        # Configure kubectl to access your Kubernetes cluster
+        # You need to create a kubeconfig file with your cluster credentials
+        # This is typically done by storing kubeconfig in AWS Secrets Manager or SSM
+        # Example: mkdir -p ~/.kube && cat << EOF > ~/.kube/config
+        # apiVersion: v1
+        # kind: Config
+        # clusters:
+        # - cluster:
+        #     server: https://your-master-node-ip:6443
+        #   name: paas-cluster
+        # users:
+        # - name: codebuild
+        #   user:
+        #     token: YOUR_SERVICE_ACCOUNT_TOKEN
+        # contexts:
+        # - context:
+        #     cluster: paas-cluster
+        #     user: codebuild
+        #   name: codebuild-context
+        # EOF
+        
         cat > k8s-deployment.yaml << EOF
-        apiVersion: apps/v1
+        apiVersion: apps/v1 
         kind: Deployment
         metadata:
           name: $APP_NAME

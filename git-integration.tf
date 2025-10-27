@@ -116,12 +116,14 @@ resource "aws_iam_role_policy" "webhook_lambda_policy" {
 }
 
 resource "aws_lambda_function" "git_webhook_handler" {
-  filename         = "webhook_handler.zip"
   function_name    = "paas-git-webhook-handler"
   role            = aws_iam_role.webhook_lambda_role.arn
   handler         = "index.handler"
   runtime         = "python3.9"
   timeout         = 60
+  
+  filename = "webhook_handler.zip"
+  source_code_hash = filebase64sha256("webhook_handler.zip")
 
   tags = {
     Name = "paas-git-webhook-handler"
